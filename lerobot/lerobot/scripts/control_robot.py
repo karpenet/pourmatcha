@@ -139,6 +139,7 @@ import os
 import time
 from dataclasses import asdict
 from pprint import pformat
+import traceback
 
 import rerun as rr
 
@@ -292,42 +293,47 @@ def record(
 
     recorded_episodes = 0
     while True:
-        if recorded_episodes >= cfg.num_episodes:
-            break
+        try:
+            if recorded_episodes >= cfg.num_episodes:
+                break
 
-        log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-        record_episode(
-            robot=robot,
-            dataset=dataset,
-            events=events,
-            episode_time_s=cfg.episode_time_s,
-            display_data=cfg.display_data,
-            policy=policy,
-            fps=cfg.fps,
-            single_task=cfg.single_task,
-        )
+            log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
+            record_episode(
+                robot=robot,
+                dataset=dataset,
+                events=events,
+                episode_time_s=cfg.episode_time_s,
+                display_data=cfg.display_data,
+                policy=policy,
+                fps=cfg.fps,
+                single_task=cfg.single_task,
+            )
 
-        # Execute a few seconds without recording to give time to manually reset the environment
-        # Current code logic doesn't allow to teleoperate during this time.
-        # TODO(rcadene): add an option to enable teleoperation during reset
-        # Skip reset for the last episode to be recorded
-        if not events["stop_recording"] and (
-            (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
-        ):
-            log_say("Reset the environment", cfg.play_sounds)
-            reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
+            # Execute a few seconds without recording to give time to manually reset the environment
+            # Current code logic doesn't allow to teleoperate during this time.
+            # TODO(rcadene): add an option to enable teleoperation during reset
+            # Skip reset for the last episode to be recorded
+            if not events["stop_recording"] and (
+                (recorded_episodes < cfg.num_episodes - 1) or events["rerecord_episode"]
+            ):
+                log_say("Reset the environment", cfg.play_sounds)
+                reset_environment(robot, events, cfg.reset_time_s, cfg.fps)
 
-        if events["rerecord_episode"]:
-            log_say("Re-record episode", cfg.play_sounds)
-            events["rerecord_episode"] = False
-            events["exit_early"] = False
-            dataset.clear_episode_buffer()
-            continue
+            if events["rerecord_episode"]:
+                log_say("Re-record episode", cfg.play_sounds)
+                events["rerecord_episode"] = False
+                events["exit_early"] = False
+                dataset.clear_episode_buffer()
+                continue
 
-        dataset.save_episode()
-        recorded_episodes += 1
+            dataset.save_episode()
+            recorded_episodes += 1
 
-        if events["stop_recording"]:
+            if events["stop_recording"]:
+                break
+        except Exception as e:
+            print(f"Exception, Save was was recorded and exit. {e}")
+            print(f"Exception traceback: {traceback.format_exc()}")
             break
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
