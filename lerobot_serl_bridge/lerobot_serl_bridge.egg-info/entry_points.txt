@@ -1,0 +1,2 @@
+[console_scripts]
+lerobot-serl-train = lerobot_serl_bridge.scripts.train_online:main

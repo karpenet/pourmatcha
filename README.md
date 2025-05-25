@@ -1,22 +1,28 @@
 # PourMatcha
 
 ## Data Collection
+
 1. Navigate to the LeRobot directory:
+
    ```bash
    cd lerobot
    ```
+
 2. Follow the instructions in the LeRobot README to create a new environment.
 
 ## Training and Inference
+
 1. Navigate to the Isaac-GR00T directory:
+
    ```bash
    cd Isaac-GR00T
    ```
+
 2. Activate the GR00T environment:
+
    ```bash
    # Activate the groot environment
    ```
-
 
 ## Teleop runbook
 
@@ -84,13 +90,13 @@ python lerobot/scripts/control_robot.py \
 sh record.sh
 
 python lerobot/scripts/visualize_dataset.py \
-  --repo-id jchun/so100_cleaning_<>
+  --repo-id jchun/so100_cleaning_20250525_132814 --episode-index 25
 
 python lerobot/scripts/control_robot.py \
   --robot.type=so100 \
   --control.type=replay \
   --control.fps=30 \
-  --control.repo_id=jchun/so100_cleaning_<> \
+  --control.repo_id=jchun/so100_cleaning_20250525_132426 \
   --control.episode=0
   
 ```
@@ -121,18 +127,16 @@ python getting_started/examples/eval_gr00t_so100.py \
  --action_horizon 16
 
  # ACT
-conda activate tinyenv
-REPO_ID="jchun/eval_act_bimual_so100_$(date +%Y%m%d_%H%M%S)"
-python lerobot/scripts/control_robot.py \
+REPO_ID="jchun/eval_act_so100_clean$(date +%Y%m%d_%H%M%S)" && python lerobot/scripts/control_robot.py \
   --robot.type=so100 \
   --control.type=record \
   --control.fps=30 \
-  --control.single_task="Pick cakes from the black tray and place them in the left bowl. Pick ice cream cones from the black tray and place them in the right bowl." \
+  --control.single_task="Clean the area in front of the robot." \
   --control.repo_id=$REPO_ID \
   --control.num_episodes=10 \
   --control.warmup_time_s=2 \
   --control.episode_time_s=120 \
   --control.reset_time_s=60 \
-  --control.push_to_hub=true \
-  --control.policy.path=/home/jasonx/.cache/huggingface/hub/models--nahidalam--lerobot_act_so100_pickplace_small_20250322_231547/snapshots/a0d415a1c39394f6a1eb3f4f0fdb60805cde9476/pretrained_model/
+  --control.push_to_hub=false \
+  --control.policy.path=../pretrained_model/
 ```
