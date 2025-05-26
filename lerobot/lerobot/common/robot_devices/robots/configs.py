@@ -564,7 +564,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "main": OpenCVCameraConfig(
-                camera_index=2,
+                camera_index=4,
                 fps=30,
                 width=640,
                 height=480,
@@ -576,7 +576,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
             #     height=480,
             # ),
             "webcam": OpenCVCameraConfig(
-                camera_index=0,
+                camera_index=1,
                 fps=30,
                 width=640,
                 height=480,
