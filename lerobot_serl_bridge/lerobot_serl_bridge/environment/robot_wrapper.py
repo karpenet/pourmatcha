@@ -54,11 +54,7 @@ class SERLRobotEnvironment:
         Returns:
             Tuple of (observation, reward, done, info)
         """
-        # Convert action to torch tensor if needed
-        if isinstance(action, np.ndarray):
-            action_tensor = torch.from_numpy(action).float()
-        else:
-            action_tensor = torch.tensor(action, dtype=torch.float32)
+        action_tensor = torch.from_numpy(action.copy()).float()
 
         # Execute action
         self.robot.send_action(action_tensor)

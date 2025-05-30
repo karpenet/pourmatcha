@@ -43,7 +43,8 @@ class EncodingWrapper(nn.Module):
                     if len(image.shape) == 5:
                         image = rearrange(image, "B T H W C -> B H W (T C)")
 
-            image = self.encoder[image_key](image, train=train, encode=not is_encoded)
+            image = self.encoder[image_key](
+                image, train=train, encode=not is_encoded)
 
             if stop_gradient:
                 image = jax.lax.stop_gradient(image)
@@ -103,7 +104,8 @@ class GCEncodingWrapper(nn.Module):
             # obs history case
             batch_size, obs_horizon = observations["image"].shape[:2]
             # fold batch_size into obs_horizon to encode each frame separately
-            obs_image = rearrange(observations["image"], "B T H W C -> (B T) H W C")
+            obs_image = rearrange(
+                observations["image"], "B T H W C -> (B T) H W C")
             # repeat goals so that there's a goal for each frame
             goal_image = repeat(
                 goals["image"], "B H W C -> (B repeat) H W C", repeat=obs_horizon
@@ -129,7 +131,8 @@ class GCEncodingWrapper(nn.Module):
             )
 
         if self.use_proprio:
-            encoding = jnp.concatenate([encoding, observations["proprio"]], axis=-1)
+            encoding = jnp.concatenate(
+                [encoding, observations["proprio"]], axis=-1)
 
         if self.stop_gradient:
             encoding = jax.lax.stop_gradient(encoding)
@@ -163,7 +166,8 @@ class LCEncodingWrapper(nn.Module):
             # obs history case
             batch_size, obs_horizon = observations["image"].shape[:2]
             # fold batch_size into obs_horizon to encode each frame separately
-            obs_image = rearrange(observations["image"], "B T H W C -> (B T) H W C")
+            obs_image = rearrange(
+                observations["image"], "B T H W C -> (B T) H W C")
             # repeat language so that there's an instruction for each frame
             language = repeat(
                 goals["language"], "B E -> (B repeat) E", repeat=obs_horizon
@@ -181,7 +185,8 @@ class LCEncodingWrapper(nn.Module):
             )
 
         if self.use_proprio:
-            encoding = jnp.concatenate([encoding, observations["proprio"]], axis=-1)
+            encoding = jnp.concatenate(
+                [encoding, observations["proprio"]], axis=-1)
 
         if self.stop_gradient:
             encoding = jax.lax.stop_gradient(encoding)

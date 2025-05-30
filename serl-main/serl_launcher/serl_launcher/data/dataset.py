@@ -114,11 +114,13 @@ class Dataset(object):
             @jax.jit
             def _sample_jax(rng, src, max_indx: int):
                 key, rng = jax.random.split(rng)
-                indx = jax.random.randint(key, (batch_size,), minval=0, maxval=max_indx)
+                indx = jax.random.randint(
+                    key, (batch_size,), minval=0, maxval=max_indx)
                 return (
                     rng,
                     indx.max(),
-                    jax.tree_map(lambda d: jnp.take(d, indx, axis=0), src),
+                    jax.tree_util.tree_map(
+                        lambda d: jnp.take(d, indx, axis=0), src),
                 )
 
             self._sample_jax = _sample_jax
@@ -131,12 +133,12 @@ class Dataset(object):
     def split(self, ratio: float) -> Tuple["Dataset", "Dataset"]:
         assert 0 < ratio and ratio < 1
         train_index = np.index_exp[: int(self.dataset_len * ratio)]
-        test_index = np.index_exp[int(self.dataset_len * ratio) :]
+        test_index = np.index_exp[int(self.dataset_len * ratio):]
 
         index = np.arange(len(self), dtype=np.int32)
         self.np_random.shuffle(index)
         train_index = index[: int(self.dataset_len * ratio)]
-        test_index = index[int(self.dataset_len * ratio) :]
+        test_index = index[int(self.dataset_len * ratio):]
 
         train_dataset_dict = _subselect(self.dataset_dict, train_index)
         test_dataset_dict = _subselect(self.dataset_dict, test_index)
@@ -181,7 +183,7 @@ class Dataset(object):
 
         for i in range(len(episode_returns)):
             if episode_returns[i] >= threshold:
-                bool_indx[episode_starts[i] : episode_ends[i]] = True
+                bool_indx[episode_starts[i]: episode_ends[i]] = True
 
         self.dataset_dict = _subselect(self.dataset_dict, bool_indx)
 

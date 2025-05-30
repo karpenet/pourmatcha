@@ -67,7 +67,8 @@ def create_classifier(
 
     with open(pretrained_encoder_path, "rb") as f:
         encoder_params = pkl.load(f)
-    param_count = sum(x.size for x in jax.tree_leaves(encoder_params))
+    param_count = sum(
+        x.size for x in jax.tree_util.tree_leaves(encoder_params))
     print(
         f"Loaded {param_count/1e6}M parameters from ResNet-10 pretrained on ImageNet-1K"
     )
@@ -106,7 +107,8 @@ def load_classifier_func(
         target=classifier,
         step=step,
     )
-    func = lambda obs: classifier.apply_fn(
+
+    def func(obs): return classifier.apply_fn(
         {"params": classifier.params}, obs, train=False
     )
     func = jax.jit(func)

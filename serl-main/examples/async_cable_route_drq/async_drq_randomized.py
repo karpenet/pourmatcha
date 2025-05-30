@@ -42,9 +42,11 @@ import franka_env
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("env", "FrankaCableRoute-Vision-v0", "Name of environment.")
+flags.DEFINE_string("env", "FrankaCableRoute-Vision-v0",
+                    "Name of environment.")
 flags.DEFINE_string("agent", "drq", "Name of agent.")
-flags.DEFINE_string("exp_name", None, "Name of the experiment for wandb logging.")
+flags.DEFINE_string(
+    "exp_name", None, "Name of the experiment for wandb logging.")
 flags.DEFINE_integer("max_traj_length", 100, "Maximum length of trajectory.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_bool("save_model", False, "Whether to save model.")
@@ -52,11 +54,15 @@ flags.DEFINE_integer("batch_size", 256, "Batch size.")
 flags.DEFINE_integer("critic_actor_ratio", 4, "critic to actor update ratio.")
 
 flags.DEFINE_integer("max_steps", 1000000, "Maximum number of training steps.")
-flags.DEFINE_integer("replay_buffer_capacity", 200000, "Replay buffer capacity.")
+flags.DEFINE_integer("replay_buffer_capacity", 200000,
+                     "Replay buffer capacity.")
 
-flags.DEFINE_integer("random_steps", 300, "Sample random actions for this many steps.")
-flags.DEFINE_integer("training_starts", 300, "Training starts after this step.")
-flags.DEFINE_integer("steps_per_update", 30, "Number of steps per update the server.")
+flags.DEFINE_integer("random_steps", 300,
+                     "Sample random actions for this many steps.")
+flags.DEFINE_integer("training_starts", 300,
+                     "Training starts after this step.")
+flags.DEFINE_integer("steps_per_update", 30,
+                     "Number of steps per update the server.")
 
 flags.DEFINE_integer("log_period", 10, "Logging period.")
 flags.DEFINE_integer("eval_period", 2000, "Evaluation period.")
@@ -78,7 +84,8 @@ flags.DEFINE_string(
 flags.DEFINE_integer(
     "eval_checkpoint_step", 0, "evaluate the policy from ckpt at this step"
 )
-flags.DEFINE_integer("eval_n_trajs", 5, "Number of trajectories for evaluation.")
+flags.DEFINE_integer(
+    "eval_n_trajs", 5, "Number of trajectories for evaluation.")
 
 flags.DEFINE_boolean(
     "debug", False, "Debug mode."
@@ -242,7 +249,8 @@ def learner(rng, agent: DrQAgent, replay_buffer, demo_buffer):
         return {}  # not expecting a response
 
     # Create server
-    server = TrainerServer(make_trainer_config(), request_callback=stats_callback)
+    server = TrainerServer(make_trainer_config(),
+                           request_callback=stats_callback)
     server.register_data_store("actor_env", replay_buffer)
     server.start(threaded=True)
 
@@ -309,7 +317,8 @@ def learner(rng, agent: DrQAgent, replay_buffer, demo_buffer):
 
         if update_steps % FLAGS.log_period == 0 and wandb_logger:
             wandb_logger.log(update_info, step=update_steps)
-            wandb_logger.log({"timer": timer.get_average_times()}, step=update_steps)
+            wandb_logger.log(
+                {"timer": timer.get_average_times()}, step=update_steps)
 
         if FLAGS.checkpoint_period and update_steps % FLAGS.checkpoint_period == 0:
             assert FLAGS.checkpoint_path is not None
@@ -342,12 +351,14 @@ def main(_):
     env = Quat2EulerWrapper(env)
     env = SERLObsWrapper(env)
     env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
-    image_keys = [key for key in env.observation_space.keys() if key != "state"]
+    image_keys = [key for key in env.observation_space.keys()
+                  if key != "state"]
     if FLAGS.actor:
         # initialize the classifier and wrap the env
 
         if FLAGS.reward_classifier_ckpt_path is None:
-            raise ValueError("reward_classifier_ckpt_path must be specified for actor")
+            raise ValueError(
+                "reward_classifier_ckpt_path must be specified for actor")
 
         reward_func = load_classifier_func(
             key=sampling_rng,
@@ -370,11 +381,12 @@ def main(_):
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
     agent: DrQAgent = jax.device_put(
-        jax.tree_map(jnp.array, agent), sharding.replicate()
+        jax.tree_util.tree_map(jnp.array, agent), sharding.replicate()
     )
 
     if FLAGS.learner:
-        sampling_rng = jax.device_put(sampling_rng, device=sharding.replicate())
+        sampling_rng = jax.device_put(
+            sampling_rng, device=sharding.replicate())
         replay_buffer = MemoryEfficientReplayBufferDataStore(
             env.observation_space,
             env.action_space,

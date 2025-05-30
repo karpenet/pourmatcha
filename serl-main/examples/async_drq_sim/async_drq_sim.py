@@ -40,7 +40,8 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string("env", "PandaPickCubeVision-v0", "Name of environment.")
 flags.DEFINE_string("agent", "drq", "Name of agent.")
-flags.DEFINE_string("exp_name", None, "Name of the experiment for wandb logging.")
+flags.DEFINE_string(
+    "exp_name", None, "Name of the experiment for wandb logging.")
 flags.DEFINE_integer("max_traj_length", 1000, "Maximum length of trajectory.")
 flags.DEFINE_integer("seed", 42, "Random seed.")
 flags.DEFINE_bool("save_model", False, "Whether to save model.")
@@ -48,15 +49,20 @@ flags.DEFINE_integer("batch_size", 256, "Batch size.")
 flags.DEFINE_integer("critic_actor_ratio", 4, "critic to actor update ratio.")
 
 flags.DEFINE_integer("max_steps", 1000000, "Maximum number of training steps.")
-flags.DEFINE_integer("replay_buffer_capacity", 200000, "Replay buffer capacity.")
+flags.DEFINE_integer("replay_buffer_capacity", 200000,
+                     "Replay buffer capacity.")
 
-flags.DEFINE_integer("random_steps", 300, "Sample random actions for this many steps.")
-flags.DEFINE_integer("training_starts", 300, "Training starts after this step.")
-flags.DEFINE_integer("steps_per_update", 30, "Number of steps per update the server.")
+flags.DEFINE_integer("random_steps", 300,
+                     "Sample random actions for this many steps.")
+flags.DEFINE_integer("training_starts", 300,
+                     "Training starts after this step.")
+flags.DEFINE_integer("steps_per_update", 30,
+                     "Number of steps per update the server.")
 
 flags.DEFINE_integer("log_period", 10, "Logging period.")
 flags.DEFINE_integer("eval_period", 2000, "Evaluation period.")
-flags.DEFINE_integer("eval_n_trajs", 5, "Number of trajectories for evaluation.")
+flags.DEFINE_integer(
+    "eval_n_trajs", 5, "Number of trajectories for evaluation.")
 
 # flag to indicate if this is a leaner or a actor
 flags.DEFINE_boolean("learner", False, "Is this a learner or a trainer.")
@@ -110,7 +116,8 @@ def actor(agent: DrQAgent, data_store, env, sampling_rng):
     eval_env = gym.make(FLAGS.env)
     if FLAGS.env == "PandaPickCubeVision-v0":
         eval_env = SERLObsWrapper(eval_env)
-        eval_env = ChunkingWrapper(eval_env, obs_horizon=1, act_exec_horizon=None)
+        eval_env = ChunkingWrapper(
+            eval_env, obs_horizon=1, act_exec_horizon=None)
     eval_env = RecordEpisodeStatistics(eval_env)
 
     obs, _ = env.reset()
@@ -207,7 +214,8 @@ def learner(
         return {}  # not expecting a response
 
     # Create server
-    server = TrainerServer(make_trainer_config(), request_callback=stats_callback)
+    server = TrainerServer(make_trainer_config(),
+                           request_callback=stats_callback)
     server.register_data_store("actor_env", replay_buffer)
     server.start(threaded=True)
 
@@ -298,7 +306,8 @@ def learner(
 
         if update_steps % FLAGS.log_period == 0 and wandb_logger:
             wandb_logger.log(update_info, step=update_steps)
-            wandb_logger.log({"timer": timer.get_average_times()}, step=update_steps)
+            wandb_logger.log(
+                {"timer": timer.get_average_times()}, step=update_steps)
 
         if FLAGS.checkpoint_period and update_steps % FLAGS.checkpoint_period == 0:
             assert FLAGS.checkpoint_path is not None
@@ -331,7 +340,8 @@ def main(_):
         env = SERLObsWrapper(env)
         env = ChunkingWrapper(env, obs_horizon=1, act_exec_horizon=None)
 
-    image_keys = [key for key in env.observation_space.keys() if key != "state"]
+    image_keys = [key for key in env.observation_space.keys()
+                  if key != "state"]
 
     rng, sampling_rng = jax.random.split(rng)
     agent: DrQAgent = make_drq_agent(
@@ -345,11 +355,12 @@ def main(_):
     # replicate agent across devices
     # need the jnp.array to avoid a bug where device_put doesn't recognize primitives
     agent: DrQAgent = jax.device_put(
-        jax.tree_map(jnp.array, agent), sharding.replicate()
+        jax.tree_util.tree_map(jnp.array, agent), sharding.replicate()
     )
 
     if FLAGS.learner:
-        sampling_rng = jax.device_put(sampling_rng, device=sharding.replicate())
+        sampling_rng = jax.device_put(
+            sampling_rng, device=sharding.replicate())
         replay_buffer = make_replay_buffer(
             env,
             capacity=FLAGS.replay_buffer_capacity,
@@ -384,7 +395,8 @@ def main(_):
             if FLAGS.demo_path:
                 # Check if the file exists
                 if not os.path.exists(FLAGS.demo_path):
-                    raise FileNotFoundError(f"File {FLAGS.demo_path} not found")
+                    raise FileNotFoundError(
+                        f"File {FLAGS.demo_path} not found")
 
                 with open(FLAGS.demo_path, "rb") as f:
                     trajs = pkl.load(f)

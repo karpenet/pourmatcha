@@ -24,9 +24,11 @@ def concat_batches(offline_batch, online_batch, axis=1):
 
     for k, v in offline_batch.items():
         if type(v) is dict:
-            batch[k] = concat_batches(offline_batch[k], online_batch[k], axis=axis)
+            batch[k] = concat_batches(
+                offline_batch[k], online_batch[k], axis=axis)
         else:
-            batch[k] = jnp.concatenate((offline_batch[k], online_batch[k]), axis=axis)
+            batch[k] = jnp.concatenate(
+                (offline_batch[k], online_batch[k]), axis=axis)
 
     return frozen_dict.freeze(batch)
 
@@ -55,12 +57,14 @@ def _unpack(batch):
             obs_pixels = batch["observations"][pixel_key][:, :-1, ...]
             next_obs_pixels = batch["observations"][pixel_key][:, 1:, ...]
 
-            obs = batch["observations"].copy(add_or_replace={pixel_key: obs_pixels})
+            obs = batch["observations"].copy(
+                add_or_replace={pixel_key: obs_pixels})
             next_obs = batch["next_observations"].copy(
                 add_or_replace={pixel_key: next_obs_pixels}
             )
             batch = batch.copy(
-                add_or_replace={"observations": obs, "next_observations": next_obs}
+                add_or_replace={"observations": obs,
+                                "next_observations": next_obs}
             )
 
     return batch
@@ -100,7 +104,8 @@ def load_resnet10_params(agent, image_keys=("image",), public=True):
                         f.write(data)
                 t.close()
                 if total_size != 0 and t.n != total_size:
-                    raise Exception("Error, something went wrong with the download")
+                    raise Exception(
+                        "Error, something went wrong with the download")
             except Exception as e:
                 raise RuntimeError(e)
             print("Download complete!")
@@ -108,7 +113,8 @@ def load_resnet10_params(agent, image_keys=("image",), public=True):
         with open(file_path, "rb") as f:
             encoder_params = pkl.load(f)
 
-    param_count = sum(x.size for x in jax.tree_leaves(encoder_params))
+    param_count = sum(
+        x.size for x in jax.tree_util.tree_leaves(encoder_params))
     print(
         f"Loaded {param_count/1e6}M parameters from ResNet-10 pretrained on ImageNet-1K"
     )

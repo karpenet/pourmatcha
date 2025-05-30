@@ -77,7 +77,8 @@ def _gaussian_blur_single_image(image, kernel_size, padding, sigma):
     if expand_batch_dim:
         image = image[jnp.newaxis, ...]
     blurred = _depthwise_conv2d(image, blur_h, strides=[1, 1], padding=padding)
-    blurred = _depthwise_conv2d(blurred, blur_v, strides=[1, 1], padding=padding)
+    blurred = _depthwise_conv2d(blurred, blur_v, strides=[
+                                1, 1], padding=padding)
     blurred = jnp.squeeze(blurred, axis=0)
     return blurred
 
@@ -149,19 +150,22 @@ def hsv_to_rgb(h, s, v):
     hcat = jnp.floor(dh).astype(jnp.int32)
     rr = (
         jnp.where(
-            (hcat == 0) | (hcat == 5), c, jnp.where((hcat == 1) | (hcat == 4), x, 0)
+            (hcat == 0) | (hcat == 5), c, jnp.where(
+                (hcat == 1) | (hcat == 4), x, 0)
         )
         + m
     )
     gg = (
         jnp.where(
-            (hcat == 1) | (hcat == 2), c, jnp.where((hcat == 0) | (hcat == 3), x, 0)
+            (hcat == 1) | (hcat == 2), c, jnp.where(
+                (hcat == 0) | (hcat == 3), x, 0)
         )
         + m
     )
     bb = (
         jnp.where(
-            (hcat == 3) | (hcat == 4), c, jnp.where((hcat == 2) | (hcat == 5), x, 0)
+            (hcat == 3) | (hcat == 4), c, jnp.where(
+                (hcat == 2) | (hcat == 5), x, 0)
         )
         + m
     )
@@ -169,7 +173,7 @@ def hsv_to_rgb(h, s, v):
 
 
 def adjust_brightness(rgb_tuple, delta):
-    return jax.tree_map(lambda x: x + delta, rgb_tuple)
+    return jax.tree_util.tree_map(lambda x: x + delta, rgb_tuple)
 
 
 def adjust_contrast(image, factor):
@@ -177,7 +181,7 @@ def adjust_contrast(image, factor):
         mean = jnp.mean(channel, axis=(-2, -1), keepdims=True)
         return factor * (channel - mean) + mean
 
-    return jax.tree_map(_adjust_contrast_channel, image)
+    return jax.tree_util.tree_map(_adjust_contrast_channel, image)
 
 
 def adjust_saturation(h, s, v, factor):
@@ -192,7 +196,8 @@ def adjust_hue(h, s, v, delta):
 
 
 def _random_brightness(rgb_tuple, rng, max_delta):
-    delta = jax.random.uniform(rng, shape=(), minval=-max_delta, maxval=max_delta)
+    delta = jax.random.uniform(
+        rng, shape=(), minval=-max_delta, maxval=max_delta)
     return adjust_brightness(rgb_tuple, delta)
 
 
@@ -213,13 +218,15 @@ def _random_saturation(rgb_tuple, rng, max_delta):
 
 def _random_hue(rgb_tuple, rng, max_delta):
     h, s, v = rgb_to_hsv(*rgb_tuple)
-    delta = jax.random.uniform(rng, shape=(), minval=-max_delta, maxval=max_delta)
+    delta = jax.random.uniform(
+        rng, shape=(), minval=-max_delta, maxval=max_delta)
     return hsv_to_rgb(*adjust_hue(h, s, v, delta))
 
 
 def _to_grayscale(image):
     rgb_weights = jnp.array([0.2989, 0.5870, 0.1140])
-    grayscale = jnp.tensordot(image, rgb_weights, axes=(-1, -1))[..., jnp.newaxis]
+    grayscale = jnp.tensordot(
+        image, rgb_weights, axes=(-1, -1))[..., jnp.newaxis]
     return jnp.tile(grayscale, (1, 1, 3))  # Back to 3 channels.
 
 
@@ -247,7 +254,8 @@ def color_transform(
     # Whether to apply grayscale transform.
     should_apply_gs = jax.random.uniform(gs_rng, shape=()) <= to_grayscale_prob
     # Whether to apply color jittering.
-    should_apply_color = jax.random.uniform(cj_rng, shape=()) <= color_jitter_prob
+    should_apply_color = jax.random.uniform(
+        cj_rng, shape=()) <= color_jitter_prob
 
     # Decorator to conditionally apply fn based on an index.
     def _make_cond(fn, idx):
@@ -256,7 +264,7 @@ def color_transform(
 
         def cond_fn(args, i):
             def clip(args):
-                return jax.tree_map(lambda arg: jnp.clip(arg, 0.0, 1.0), args)
+                return jax.tree_util.tree_map(lambda arg: jnp.clip(arg, 0.0, 1.0), args)
 
             out = jax.lax.cond(
                 should_apply & should_apply_color & (i == idx),
@@ -275,18 +283,23 @@ def color_transform(
     random_hue_cond = _make_cond(_random_hue, idx=3)
 
     def _color_jitter(x):
-        rgb_tuple = tuple(jax.tree_map(jnp.squeeze, jnp.split(x, 3, axis=-1)))
+        rgb_tuple = tuple(jax.tree_util.tree_map(
+            jnp.squeeze, jnp.split(x, 3, axis=-1)))
         if shuffle:
-            order = jax.random.permutation(perm_rng, jnp.arange(4, dtype=jnp.int32))
+            order = jax.random.permutation(
+                perm_rng, jnp.arange(4, dtype=jnp.int32))
         else:
             order = range(4)
         for idx in order:
             if brightness > 0:
-                rgb_tuple = random_brightness_cond((rgb_tuple, b_rng, brightness), idx)
+                rgb_tuple = random_brightness_cond(
+                    (rgb_tuple, b_rng, brightness), idx)
             if contrast > 0:
-                rgb_tuple = random_contrast_cond((rgb_tuple, c_rng, contrast), idx)
+                rgb_tuple = random_contrast_cond(
+                    (rgb_tuple, c_rng, contrast), idx)
             if saturation > 0:
-                rgb_tuple = random_saturation_cond((rgb_tuple, s_rng, saturation), idx)
+                rgb_tuple = random_saturation_cond(
+                    (rgb_tuple, s_rng, saturation), idx)
             if hue > 0:
                 rgb_tuple = random_hue_cond((rgb_tuple, h_rng, hue), idx)
         return jnp.stack(rgb_tuple, axis=-1)

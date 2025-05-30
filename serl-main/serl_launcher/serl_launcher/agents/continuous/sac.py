@@ -178,7 +178,8 @@ class SACAgent(flax.struct.PyTreeNode):
         chex.assert_shape(
             predicted_qs, (self.config["critic_ensemble_size"], batch_size)
         )
-        target_qs = target_q[None].repeat(self.config["critic_ensemble_size"], axis=0)
+        target_qs = target_q[None].repeat(
+            self.config["critic_ensemble_size"], axis=0)
         chex.assert_equal_shape([predicted_qs, target_qs])
         critic_loss = jnp.mean((predicted_qs - target_qs) ** 2)
 
@@ -198,7 +199,8 @@ class SACAgent(flax.struct.PyTreeNode):
         action_distributions = self.forward_policy(
             batch["observations"], rng=policy_rng, grad_params=params
         )
-        actions, log_probs = action_distributions.sample_and_log_prob(seed=sample_rng)
+        actions, log_probs = action_distributions.sample_and_log_prob(
+            seed=sample_rng)
 
         predicted_qs = self.forward_critic(
             batch["observations"],
@@ -282,7 +284,8 @@ class SACAgent(flax.struct.PyTreeNode):
 
         # Update target network (if requested)
         if "critic" in networks_to_update:
-            new_state = new_state.target_update(self.config["soft_target_update_rate"])
+            new_state = new_state.target_update(
+                self.config["soft_target_update_rate"])
 
         # Update RNG
         rng, _ = jax.random.split(self.state.rng)
@@ -520,8 +523,10 @@ class SACAgent(flax.struct.PyTreeNode):
             **policy_kwargs,
             name="actor",
         )
-        critic_cls = partial(Critic, encoder=None, network=MLP(**critic_network_kwargs))
-        critic_def = ensemblize(critic_cls, critic_ensemble_size)(name="critic")
+        critic_cls = partial(Critic, encoder=None,
+                             network=MLP(**critic_network_kwargs))
+        critic_def = ensemblize(
+            critic_cls, critic_ensemble_size)(name="critic")
         temperature_def = GeqLagrangeMultiplier(
             init_value=temperature_init,
             constraint_shape=(),
@@ -568,18 +573,21 @@ class SACAgent(flax.struct.PyTreeNode):
             (agent,) = carry
             (minibatch,) = data
             agent, info = agent.update(
-                minibatch, pmap_axis=pmap_axis, networks_to_update=frozenset({"critic"})
+                minibatch, pmap_axis=pmap_axis, networks_to_update=frozenset({
+                                                                             "critic"})
             )
             return (agent,), info
 
         def make_minibatch(data: jnp.ndarray):
             return jnp.reshape(data, (utd_ratio, minibatch_size) + data.shape[1:])
 
-        minibatches = jax.tree_map(make_minibatch, batch)
+        minibatches = jax.tree_util.tree_map(make_minibatch, batch)
 
-        (agent,), critic_infos = jax.lax.scan(scan_body, (self,), (minibatches,))
+        (agent,), critic_infos = jax.lax.scan(
+            scan_body, (self,), (minibatches,))
 
-        critic_infos = jax.tree_map(lambda x: jnp.mean(x, axis=0), critic_infos)
+        critic_infos = jax.tree_util.tree_map(
+            lambda x: jnp.mean(x, axis=0), critic_infos)
         del critic_infos["actor"]
         del critic_infos["temperature"]
 

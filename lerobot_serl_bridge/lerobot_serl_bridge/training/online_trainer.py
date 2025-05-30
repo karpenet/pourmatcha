@@ -10,39 +10,38 @@ import numpy as np
 from pathlib import Path
 
 # PyTorch imports for policy handling
-try:
-    import torch
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
+import torch
+
 
 # JAX imports for SERL
-try:
-    import jax
-    import jax.numpy as jnp
-    from flax.training import checkpoints
-    JAX_AVAILABLE = True
-except ImportError:
-    JAX_AVAILABLE = False
+import jax
+import jax.numpy as jnp
+from flax.training import checkpoints
 
 # SERL imports (conditional)
-try:
-    from serl_launcher.agents.continuous.sac import SACAgent
-    SERL_AVAILABLE = True
-except ImportError:
-    logging.warning(
-        "SERL not available. Install serl_launcher for full functionality.")
-    SERL_AVAILABLE = False
+from serl_launcher.agents.continuous.drq import DrQAgent
+from serl_launcher.data.data_store import MemoryEfficientReplayBufferDataStore
+import gym.spaces as spaces
 
 # LeRobot imports
 from lerobot.common.policies.act.modeling_act import ACTPolicy
 from lerobot.common.policies.act.configuration_act import ACTConfig
+
+# SERL-LeRobot bridge imports
+from ..policies import SERLPolicy, SERLConfig
+
+from enum import Enum
 
 from .config import TrainingConfig
 from .reward_functions import dummy_reward_function
 from ..environment.robot_wrapper import SERLRobotEnvironment
 
 logger = logging.getLogger(__name__)
+
+
+class InferencePolicy(Enum):
+    ACT = "ACT"
+    SERL = "SERL"
 
 
 class OnlineRLTrainer:
@@ -57,17 +56,21 @@ class OnlineRLTrainer:
         import logging
         self.logger = logging.getLogger(__name__)
 
+        self.torch_device = torch.device(self.config.device)
+        self.jax_device = jax.devices(self.config.device)[0]
+
         # Initialize attributes
         self.policy = None
         self.environment = None
         self.serl_agent = None
         self.replay_buffer = None
-        self.training_rng = jax.random.PRNGKey(42) if JAX_AVAILABLE else None
+        self.training_rng = jax.random.PRNGKey(42)
         self.update_steps = 0
 
         # Initialize components
         self._setup_policy()
         self._setup_environment()
+        self._setup_replay_buffer()
         self._setup_serl_agent()
 
         # Training state
@@ -76,129 +79,33 @@ class OnlineRLTrainer:
 
     def _setup_policy(self):
         """Setup the ACT policy for training"""
-        try:
-            # Try to load existing policy
-            if (self.config.policy_path and
-                    Path(self.config.policy_path).exists()):
-                self.logger.info(
-                    f"Loading policy from {self.config.policy_path}")
-                self.policy = ACTPolicy.from_pretrained(
-                    self.config.policy_path)
-            else:
-                self.logger.info("Creating new ACT policy")
-                self.policy = self._create_default_act_policy()
-        except Exception as e:
-            self.logger.error(f"Failed to setup policy: {e}")
-            raise
-
-    def _create_default_act_policy(self):
-        """Create a default ACT policy with proper feature configuration"""
-        from lerobot.configs.types import PolicyFeature, FeatureType
-
-        # Create ACT configuration with proper features
-        act_config = ACTConfig()
-
-        # Configure input features based on robot capabilities
-        input_features = {}
-
-        # State features - required for robot control
-        input_features["observation.state"] = PolicyFeature(
-            type=FeatureType.STATE,
-            shape=(self.config.action_dim,)
+        # Try to load existing policy
+        print(
+            f"Loading policy from {self.config.huggingface_repo_id}")
+        self.policy = ACTPolicy.from_pretrained(
+            self.config.huggingface_repo_id,
         )
+        self.policy.to(self.torch_device)
 
-        # Add image features if available
-        if self.config.image_keys:
-            for image_key in self.config.image_keys:
-                # Default image shape for so100 (C, H, W)
-                key = f"observation.images.{image_key}"
-                input_features[key] = PolicyFeature(
-                    type=FeatureType.VISUAL,
-                    shape=(3, 480, 640)
-                )
+        self._inference_policy = InferencePolicy.ACT
 
-        # Output features
-        output_features = {
-            "action": PolicyFeature(
-                type=FeatureType.ACTION,
-                shape=(self.config.action_dim,)
-            )
-        }
-
-        # Set features in config
-        act_config.input_features = input_features
-        act_config.output_features = output_features
-
-        # Configure input/output shapes for backward compatibility
-        act_config.input_shapes = {
-            key: list(feature.shape)
-            for key, feature in input_features.items()
-        }
-        act_config.output_shapes = {
-            key: list(feature.shape)
-            for key, feature in output_features.items()
-        }
-
-        # Configure normalization modes
-        act_config.input_normalization_modes = {}
-        act_config.output_normalization_modes = {}
-
-        for key, feature in input_features.items():
-            if feature.type == FeatureType.VISUAL:
-                act_config.input_normalization_modes[key] = "mean_std"
-            else:
-                act_config.input_normalization_modes[key] = "mean_std"
-
-        for key, feature in output_features.items():
-            act_config.output_normalization_modes[key] = "mean_std"
-
-        # Vision encoder configuration
-        if self.config.image_keys:
-            act_config.vision_backbone = "resnet18"
-            pretrained_weights = "ResNet18_Weights.IMAGENET1K_V1"
-            act_config.pretrained_backbone_weights = pretrained_weights
-
-        # Other ACT-specific configurations
-        act_config.n_action_steps = 100  # Horizon for action prediction
-        act_config.chunk_size = 50  # Size of action chunks
-        act_config.n_obs_steps = 1
-
-        # Create the policy
-        policy = ACTPolicy(act_config)
-
-        # Initialize with dummy stats to avoid "mean is infinity" error
-        try:
-            # Create dummy stats for normalization
-            dummy_stats = {}
-            for key, feature in act_config.input_features.items():
-                if feature.type.value == "VISUAL":
-                    # Image normalization stats (mean=0, std=1)
-                    dummy_stats[key] = {
-                        "mean": torch.zeros(feature.shape),
-                        "std": torch.ones(feature.shape)
-                    }
-                else:
-                    # State normalization stats (mean=0, std=1)
-                    dummy_stats[key] = {
-                        "mean": torch.zeros(feature.shape),
-                        "std": torch.ones(feature.shape)
-                    }
-
-            # Set the stats if the policy supports it
-            if hasattr(policy, 'set_stats'):
-                policy.set_stats(dummy_stats)
-            elif hasattr(policy, 'stats'):
-                policy.stats = dummy_stats
-
-        except Exception as e:
-            self.logger.warning(f"Could not initialize policy stats: {e}")
-
-        self.logger.info(f"Created ACT policy with config: {act_config}")
-        return policy
+        # Debug: Print policy configuration
+        if hasattr(self.policy, 'config'):
+            print(f"ACT Policy config:")
+            if hasattr(self.policy.config, 'image_features'):
+                print(
+                    f"  Image features: {self.policy.config.image_features}")
+            if hasattr(self.policy.config, 'input_features'):
+                print(
+                    f"  Input features: {list(self.policy.config.input_features.keys())}")
+            if hasattr(self.policy.config, 'input_shapes'):
+                print(f"  Input shapes: {self.policy.config.input_shapes}")
+        else:
+            print("  No config found on policy")
 
     def _setup_environment(self):
         """Setup SERL-compatible robot environment"""
-        logger.info("Setting up robot environment...")
+        print("Setting up robot environment...")
 
         self.environment = SERLRobotEnvironment(
             robot=self.robot,
@@ -206,59 +113,87 @@ class OnlineRLTrainer:
             max_episode_length=self.config.max_episode_length
         )
 
-        logger.info("Robot environment setup complete")
+        print("Robot environment setup complete")
+
+    def _setup_replay_buffer(self):
+        """Setup the replay buffer for storing experience"""
+
+        # Get sample observation to determine proper spaces
+        sample_obs = self.environment.reset()
+
+        # Create proper gym spaces if they don't exist
+        obs_spaces = {}
+        for key, value in sample_obs.items():
+            if key == "state":
+                obs_spaces[key] = spaces.Box(
+                    low=-np.inf, high=np.inf, shape=value.shape, dtype=np.float32
+                )
+            elif key == "image":
+                obs_spaces[key] = spaces.Box(
+                    low=0, high=255, shape=value.shape, dtype=np.uint8
+                )
+
+        observation_space = spaces.Dict(obs_spaces)
+
+        # Create action space
+        action_space = spaces.Box(
+            low=-np.inf, high=np.inf,
+            shape=(self.config.action_dim,), dtype=np.float32
+        )
+
+        image_keys = ["image"] if "image" in sample_obs else []
+
+        self.replay_buffer = MemoryEfficientReplayBufferDataStore(
+            observation_space=observation_space,
+            action_space=action_space,
+            capacity=self.config.replay_buffer_capacity,
+            image_keys=image_keys,
+        )
+
+        logger.info(
+            f"Replay buffer created with capacity: "
+            f"{self.config.replay_buffer_capacity}")
 
     def _setup_serl_agent(self):
-        """Initialize the SERL SAC agent"""
-        if not (SERL_AVAILABLE and JAX_AVAILABLE):
-            return
+        """Initialize the SERL policy wrapper using ACT policy config"""
 
-        try:
-            # Create dummy observations and actions for agent initialization
-            dummy_obs = {
-                "state": np.zeros((1, 7), dtype=np.float32),
-                "image": np.zeros((1, 224, 224, 3), dtype=np.float32)
-            }
-            dummy_actions = np.zeros(
-                (1, self.config.action_dim), dtype=np.float32)
+        print("Setting up SERL policy wrapper from ACT config...")
 
-            # Create the SERL agent using the create_pixels method
-            rng = jax.random.PRNGKey(42)
+        # Create SERL policy wrapper from the loaded ACT policy
+        # This preserves all input/output features, normalization settings,
+        # and dataset statistics from the ACT policy
+        self.serl_policy = SERLPolicy.from_act_policy(
+            act_policy=self.policy,
+            encoder_type="resnet-pretrained",
+            shared_encoder=True,
+            critic_ensemble_size=2,
+            discount=0.95,
+            soft_target_update_rate=0.005,
+            utd_ratio=self.config.utd_ratio,
+        )
 
-            # Use a simple encoder for the visual features
-            from serl_launcher.networks.encoders import encoders
-            encoder_def = encoders["resnet_v1_34"](
-                pooling_method="avg", normalize=True
-            )
+        # Move to appropriate device
+        self.serl_policy.to(self.torch_device)
 
-            self.serl_agent = SACAgent.create_pixels(
-                rng=rng,
-                observations=dummy_obs,
-                actions=dummy_actions,
-                encoder_def=encoder_def,
-                shared_encoder=True,
-                use_proprio=True,
-                critic_network_kwargs={
-                    "hidden_dims": [256, 256],
-                },
-                policy_network_kwargs={
-                    "hidden_dims": [256, 256],
-                },
-                policy_kwargs={
-                    "tanh_squash_distribution": True,
-                    "std_parameterization": "uniform",
-                },
-                critic_ensemble_size=2,
-                discount=0.95,
-                soft_target_update_rate=0.005,
-                target_entropy=-self.config.action_dim,
-            )
+        print("SERL policy wrapper initialized successfully from ACT config")
 
-            print("SERL agent initialized successfully")
+        # Debug: Print configuration comparison
+        print(
+            f"ACT config features: {list(self.policy.config.input_features.keys())}")
+        print(
+            f"SERL config features: {list(self.serl_policy.config.input_features.keys())}")
+        print(f"SERL action dim: {self.serl_policy.config.action_dim}")
+        print(f"SERL image keys: {self.serl_policy.config.image_keys}")
+        print(f"SERL use_proprio: {self.serl_policy.config.use_proprio}")
 
-        except Exception as e:
-            logger.error(f"Failed to initialize SERL agent: {e}")
-            self.serl_agent = None
+    def _decide_inference_policy(self):
+        self._inference_policy = InferencePolicy.SERL
+        # if (len(self.replay_buffer) < self.config.min_buffer_size) or self.update_steps < 1:
+        #     self._inference_policy = InferencePolicy.ACT
+        # elif jax.random.uniform(self.training_rng) < self.config.policy_switch_probability:
+        #     self._inference_policy = InferencePolicy.SERL
+        # else:
+        #     self._inference_policy = InferencePolicy.ACT
 
     def collect_experience(
         self, num_episodes: int = 1
@@ -272,12 +207,18 @@ class OnlineRLTrainer:
         Returns:
             List of episode data
         """
-        logger.info(f"Collecting {num_episodes} episodes of experience...")
+        print(f"Collecting {num_episodes} episodes of experience...")
 
         all_episodes = []
 
         for episode in range(num_episodes):
-            logger.info(f"Episode {episode + 1}/{num_episodes}")
+            print(f"Episode {episode + 1}/{num_episodes}")
+
+            # Determine which policy will be used
+            self._decide_inference_policy()
+            buffer_size = len(self.replay_buffer) if self.replay_buffer else 0
+            print(
+                f"Using {self._inference_policy.value} policy | Buffer size: {buffer_size} | Update steps: {self.update_steps}")
 
             # Reset environment
             obs = self.environment.reset()
@@ -311,7 +252,7 @@ class OnlineRLTrainer:
                     break
 
             all_episodes.append(episode_data)
-            logger.info(
+            print(
                 f"Episode {episode + 1} completed: {len(episode_data)} "
                 f"steps, return: {episode_return:.3f}")
 
@@ -322,63 +263,48 @@ class OnlineRLTrainer:
         return all_episodes
 
     def _get_action(self, observation: Dict[str, np.ndarray]) -> np.ndarray:
-        """Get action from current policy"""
-        if self.serl_agent is not None:
-            # Use SERL agent for action selection
-            try:
-                # Format observation for SERL
-                serl_obs = self._format_observation_for_serl(observation)
+        """Get action from current policy with bootstrap strategy"""
 
-                # Sample action from SERL agent
-                if self.training_rng is not None:
-                    self.training_rng, action_key = jax.random.split(
-                        self.training_rng)
-                    action = self.serl_agent.sample_actions(
-                        observations=serl_obs,
-                        seed=action_key,
-                        argmax=False
-                    )
-                    return np.asarray(jax.device_get(action))
-            except Exception as e:
-                logger.warning(f"Failed to get action from SERL agent: {e}")
+        if (self._inference_policy == InferencePolicy.ACT and
+                self.policy is not None):
+            # Use ACT policy for bootstrapping
+            policy_obs = self._format_observation_for_policy(observation)
 
-        # Fallback to PyTorch policy or random actions
-        if not TORCH_AVAILABLE:
-            logger.error("PyTorch not available for policy inference")
-            return np.random.uniform(-1, 1, self.config.action_dim)
-
-        try:
-            # Format observation for policy
-            policy_input = self._format_observation_for_policy(observation)
-
-            # Get action from policy
             with torch.no_grad():
-                action = self.policy.select_action(policy_input)
+                # Get action from ACT policy
+                action_dict = self.policy.select_action(policy_obs)
+                action = action_dict.cpu().numpy()[0]  # Remove batch dim
 
-            # Convert to numpy
-            if hasattr(action, 'numpy'):
-                action = action.numpy()
-            elif hasattr(action, 'cpu'):
-                action = action.cpu().numpy()
-
+            logger.debug("Using ACT policy for action selection")
+            print(f"ACT Action: {action}")
             return action
-        except Exception as e:
-            logger.error(f"Failed to get action from policy: {e}")
-            # Return random action as fallback
-            return np.random.uniform(-1, 1, self.config.action_dim)
+
+        else:
+            # Use SERL policy wrapper for action selection
+            serl_obs = self._format_observation_for_serl_wrapper(observation)
+
+            with torch.no_grad():
+                action_tensor = self.serl_policy.select_action(serl_obs)
+                action = action_tensor.cpu().numpy()
+
+            logger.debug("Using SERL policy wrapper for action selection")
+            print(f"SERL Action: {action}")
+            return action
+
+        # Fallback to zero action if nothing works
+        logger.warning("No policy available, using zero action")
+        return np.zeros(self.config.action_dim)
 
     def _format_observation_for_policy(
         self, observation: Dict[str, np.ndarray]
     ) -> Dict[str, torch.Tensor]:
         """Format observation for LeRobot policy"""
-        if not TORCH_AVAILABLE:
-            raise ImportError("PyTorch not available")
 
         formatted_obs = {}
 
         if "state" in observation:
             formatted_obs["observation.state"] = torch.FloatTensor(
-                observation["state"]).unsqueeze(0)
+                observation["state"]).unsqueeze(0).to(self.torch_device)
 
         if "image" in observation:
             # Ensure image is in correct format (C, H, W)
@@ -386,32 +312,47 @@ class OnlineRLTrainer:
             if len(image.shape) == 3 and image.shape[-1] == 3:
                 # (H, W, C) -> (C, H, W)
                 image = np.transpose(image, (2, 0, 1))
-            formatted_obs["observation.image"] = torch.FloatTensor(
-                image).unsqueeze(0)
+
+            # Based on your ACT config, provide both main and webcam images
+            # Since environment only provides one image, use it for both
+            image_tensor = torch.FloatTensor(
+                image).unsqueeze(0).to(self.torch_device)
+            formatted_obs["observation.images.main"] = image_tensor
+            formatted_obs["observation.images.webcam"] = image_tensor
 
         return formatted_obs
 
-    def _format_observation_for_serl(
+    def _format_observation_for_serl_wrapper(
         self, observation: Dict[str, np.ndarray]
-    ) -> Dict[str, jnp.ndarray]:
-        """Format observation for SERL agent"""
-        if not JAX_AVAILABLE:
-            raise ImportError("JAX not available")
+    ) -> Dict[str, torch.Tensor]:
+        """Format observation for SERL policy wrapper (PyTorch tensors)"""
 
         formatted_obs = {}
 
         if "state" in observation:
-            formatted_obs["state"] = jnp.array(observation["state"]).to(
-                jax.devices("gpu")[0])
+            formatted_obs["observation.state"] = torch.FloatTensor(
+                observation["state"]).unsqueeze(0).to(self.torch_device)
 
         if "image" in observation:
-            # Ensure image is in correct format for SERL
+            # Ensure image is in correct format for SERL wrapper
             image = observation["image"]
+
+            # Handle different input formats
             if len(image.shape) == 3:
-                # Add batch dimension if needed
-                image = image[None, ...]
-            formatted_obs["image"] = jnp.array(image).to(
-                jax.devices("gpu")[0])
+                if image.shape[-1] == 3:  # (H, W, C)
+                    # Convert (H, W, C) -> (C, H, W) for LeRobot format
+                    image = np.transpose(image, (2, 0, 1))
+                # else already in (C, H, W) format
+
+            # Provide ALL required image keys using the same image data
+            # This matches what we do for ACT policy formatting
+            image_tensor = torch.FloatTensor(image).unsqueeze(0).to(
+                self.torch_device)
+
+            for image_key in self.serl_policy.config.image_keys:
+                key = f"observation.images.{image_key}"
+                if key in self.serl_policy.config.input_features:
+                    formatted_obs[key] = image_tensor
 
         return formatted_obs
 
@@ -423,11 +364,27 @@ class OnlineRLTrainer:
         try:
             for transition in episode_data:
                 # Format transition for SERL buffer
+                # Only include keys that both environment and buffer understand
+                obs = transition["observation"]
+                next_obs = transition["next_observation"]
+
+                # Create clean observations with only the keys we need
+                clean_obs = {}
+                clean_next_obs = {}
+
+                if "state" in obs:
+                    clean_obs["state"] = obs["state"]
+                    clean_next_obs["state"] = next_obs["state"]
+
+                if "image" in obs:
+                    clean_obs["image"] = obs["image"]
+                    clean_next_obs["image"] = next_obs["image"]
+
                 formatted_transition = {
-                    "observations": transition["observation"],
+                    "observations": clean_obs,
                     "actions": transition["action"],
                     "rewards": np.array([transition["reward"]]),
-                    "next_observations": transition["next_observation"],
+                    "next_observations": clean_next_obs,
                     "masks": np.array([not transition["done"]]),
                     "dones": np.array([transition["done"]])
                 }
@@ -437,54 +394,50 @@ class OnlineRLTrainer:
 
         except Exception as e:
             logger.error(f"Failed to add episode to buffer: {e}")
+            # Log more details about the error
+            if len(episode_data) > 0:
+                sample_obs = episode_data[0]["observation"]
+                logger.error(
+                    f"Sample observation keys: {list(sample_obs.keys())}")
+            raise e  # Re-raise to see the full error
 
     def train_policy(self) -> Dict[str, float]:
         """
-        Train policy using SERL algorithms.
+        Train policy using SERL algorithms through the wrapper.
 
         Returns:
             Training metrics
         """
-        if not (SERL_AVAILABLE and self.serl_agent is not None):
-            logger.error("SERL agent not available for training")
-            return {}
 
         if len(self.replay_buffer) < self.config.batch_size:
             logger.warning("Not enough data in replay buffer for training")
             return {}
 
-        logger.info("Training policy with SERL...")
+        print("Training policy with SERL wrapper...")
 
         try:
             # Sample batch from replay buffer
             batch = self.replay_buffer.sample(self.config.batch_size)
 
-            # Convert batch to JAX format if needed
-            jax_batch = {}
-            for key, value in batch.items():
-                if isinstance(value, np.ndarray):
-                    jax_batch[key] = jnp.array(value)
-                else:
-                    jax_batch[key] = value
+            # Convert SERL replay buffer format to LeRobot format
+            torch_batch = self._convert_serl_batch_to_lerobot(batch)
 
-            # Perform SERL update
-            self.serl_agent, update_info = self.serl_agent.update_high_utd(
-                jax_batch,
-                utd_ratio=self.config.utd_ratio
-            )
+            # Perform SERL update through wrapper
+            loss, update_info = self.serl_policy.forward(torch_batch)
 
             self.update_steps += 1
 
             # Extract metrics
             metrics = {
-                "policy_loss": float(update_info.get("actor_loss", 0.0)),
-                "critic_loss": float(update_info.get("critic_loss", 0.0)),
-                "q_value": float(update_info.get("predicted_qs", 0.0)),
+                "total_loss": float(loss.item()),
+                "actor_loss": update_info.get("actor_loss", 0.0),
+                "critic_loss": update_info.get("critic_loss", 0.0),
+                "q_value": update_info.get("q_value", 0.0),
                 "update_steps": self.update_steps,
             }
 
             # Log to wandb if available
-            if self.wandb_logger is not None:
+            if hasattr(self, 'wandb_logger') and self.wandb_logger is not None:
                 self.wandb_logger.log(metrics, step=self.update_steps)
 
             return metrics
@@ -492,6 +445,44 @@ class OnlineRLTrainer:
         except Exception as e:
             logger.error(f"Training step failed: {e}")
             return {}
+
+    def _convert_serl_batch_to_lerobot(
+        self, serl_batch: Dict[str, Any]
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Convert SERL replay buffer batch to LeRobot format.
+
+        Args:
+            serl_batch: Batch from SERL replay buffer
+
+        Returns:
+            Batch in LeRobot format for SERL policy wrapper
+        """
+        torch_batch = {}
+
+        # Handle observations
+        observations = serl_batch.get("observations", {})
+        for obs_key, obs_value in observations.items():
+            if obs_key == "state":
+                torch_batch["observation.state"] = torch.FloatTensor(
+                    obs_value).to(self.torch_device)
+            elif obs_key in self.serl_policy.config.image_keys:
+                # Map to the correct LeRobot image key format
+                lerobot_key = f"observation.images.{obs_key}"
+                torch_batch[lerobot_key] = torch.FloatTensor(
+                    obs_value).to(self.torch_device)
+
+        # Handle actions
+        if "actions" in serl_batch:
+            torch_batch["action"] = torch.FloatTensor(
+                serl_batch["actions"]).to(self.torch_device)
+
+        # Handle rewards (optional)
+        if "rewards" in serl_batch:
+            torch_batch["reward"] = torch.FloatTensor(
+                serl_batch["rewards"]).to(self.torch_device)
+
+        return torch_batch
 
     def save_checkpoint(self, iteration: int, save_path: Optional[str] = None):
         """Save training checkpoint"""
@@ -504,20 +495,17 @@ class OnlineRLTrainer:
         os.makedirs(save_path, exist_ok=True)
 
         try:
-            # Save PyTorch policy
-            if hasattr(self.policy, 'state_dict') and TORCH_AVAILABLE:
-                policy_path = os.path.join(save_path, "policy.pth")
-                torch.save(self.policy.state_dict(), policy_path)
+            policy_path = os.path.join(save_path, "policy.pth")
+            torch.save(self.policy.state_dict(), policy_path)
 
             # Save SERL agent
-            if self.serl_agent is not None and JAX_AVAILABLE:
-                jax_policy_path = os.path.join(save_path, "serl_agent")
-                checkpoints.save_checkpoint(
-                    jax_policy_path,
-                    target=self.serl_agent.state,
-                    step=iteration,
-                    overwrite=True
-                )
+            jax_policy_path = os.path.join(save_path, "serl_agent")
+            checkpoints.save_checkpoint(
+                jax_policy_path,
+                target=self.serl_agent.state,
+                step=iteration,
+                overwrite=True
+            )
 
             # Save training metadata
             metadata = {
@@ -531,7 +519,7 @@ class OnlineRLTrainer:
             with open(os.path.join(save_path, "metadata.json"), "w") as f:
                 json.dump(metadata, f, indent=2)
 
-            logger.info(f"Checkpoint saved to {save_path}")
+            print(f"Checkpoint saved to {save_path}")
 
         except Exception as e:
             logger.error(f"Failed to save checkpoint: {e}")
@@ -548,29 +536,27 @@ class OnlineRLTrainer:
             num_iterations: Number of training iterations
             episodes_per_iteration: Episodes to collect per iteration
         """
-        logger.info("Starting online RL training...")
+        print("Starting online RL training...")
 
         # Create checkpoint directory
         os.makedirs(self.config.checkpoint_path, exist_ok=True)
 
         for iteration in range(num_iterations):
-            logger.info(f"Training iteration {iteration + 1}/{num_iterations}")
+            print(f"Training iteration {iteration + 1}/{num_iterations}")
 
             # Collect experience
             self.collect_experience(num_episodes=episodes_per_iteration)
 
-            # Train policy (if SERL is available and we have enough data)
-            if SERL_AVAILABLE and iteration > 0:
-                metrics = self.train_policy()
-                logger.info(f"Training metrics: {metrics}")
+            metrics = self.train_policy()
+            print(f"Training metrics: {metrics}")
 
             # Save checkpoint
-            checkpoint_freq = (self.config.checkpoint_frequency //
-                               episodes_per_iteration)
+            checkpoint_freq = (self.config.checkpoint_frequency
+                               // episodes_per_iteration)
             if (iteration + 1) % checkpoint_freq == 0:
                 self.save_checkpoint(iteration + 1)
 
-        logger.info("Online training completed!")
+        print("Online training completed!")
 
     def cleanup(self):
         """Cleanup resources"""
@@ -579,4 +565,4 @@ class OnlineRLTrainer:
 
         if self.robot and self.robot.is_connected:
             self.robot.disconnect()
-            logger.info("Robot disconnected")
+            print("Robot disconnected")

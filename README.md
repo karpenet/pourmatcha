@@ -101,6 +101,17 @@ python lerobot/scripts/control_robot.py \
   
 ```
 
+## train
+python lerobot/scripts/train.py \
+  --dataset.repo_id=jchun/so100_cleaning_20250524_150422 \
+  --policy.type=act \
+  --output_dir=outputs/train/act_so100_cleaning \
+  --job_name=act_so100_cleaning \
+  --policy.device=cuda \
+  --wandb.enable=true 
+
+huggingface-cli upload jchun/act_clean /workspace/outputs/train/act_so100_cleaning/20250526_001722/checkpoints/016000
+
 ## inference
 
 ```
@@ -135,8 +146,12 @@ REPO_ID="jchun/eval_act_so100_clean$(date +%Y%m%d_%H%M%S)" && python lerobot/scr
   --control.repo_id=$REPO_ID \
   --control.num_episodes=10 \
   --control.warmup_time_s=2 \
-  --control.episode_time_s=120 \
+  --control.episode_time_s=36000 \
   --control.reset_time_s=60 \
   --control.push_to_hub=false \
-  --control.policy.path=../pretrained_model/
+  --control.policy.path=jchun/act_cleaning_16k
+
+# Train SERL
+cd lerobot_serl_bridge
+python examples/serl_integration_example.py 
 ```
