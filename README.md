@@ -26,6 +26,7 @@
 
 ## Teleop runbook
 
+check lerobot/lerobot/common/robot_devices/robots/configs.py
 ```
 
 ls /dev/ | grep ACM 
@@ -45,14 +46,18 @@ sudo chmod 666 /dev/ttyACM3
 
 conda activate tinyenv
 
+# calibration
 python lerobot/scripts/control_robot.py   --robot.type=so100   --robot.cameras='{}'   --control.type=calibrate   --control.arms='["main_follower"]'
 
+# teleop
 python lerobot/scripts/control_robot.py \
   --robot.type=so100 \
   --robot.cameras='{}' \
   --control.type=teleoperate
 
-python lerobot/scripts/control_robot.py --robot.type=so100 --control.type=teleoperate
+# with camera stream
+python lerobot/scripts/control_robot.py --robot.type=so100 --control.type=teleoperate --control.display_data=true
+
 ```
 
 ## Cameras
@@ -102,13 +107,14 @@ python lerobot/scripts/control_robot.py \
 ```
 
 ## train
+
 python lerobot/scripts/train.py \
   --dataset.repo_id=jchun/so100_cleaning_20250524_150422 \
   --policy.type=act \
   --output_dir=outputs/train/act_so100_cleaning \
   --job_name=act_so100_cleaning \
   --policy.device=cuda \
-  --wandb.enable=true 
+  --wandb.enable=true
 
 huggingface-cli upload jchun/act_clean /workspace/outputs/train/act_so100_cleaning/20250526_001722/checkpoints/016000
 

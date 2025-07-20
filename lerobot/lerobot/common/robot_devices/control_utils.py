@@ -28,6 +28,8 @@ import rerun as rr
 import torch
 from deepdiff import DeepDiff
 from termcolor import colored
+import numpy as np
+import cv2
 
 from lerobot.common.datasets.image_writer import safe_stop_image_writer
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
@@ -105,13 +107,15 @@ def predict_action(observation, policy, device, use_amp):
     observation = copy(observation)
     with (
         torch.inference_mode(),
-        torch.autocast(device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
+        torch.autocast(
+            device_type=device.type) if device.type == "cuda" and use_amp else nullcontext(),
     ):
         # Convert to pytorch format: channel first and float32 in [0,1] with batch dimension
         for name in observation:
             if "image" in name:
                 observation[name] = observation[name].type(torch.float32) / 255
-                observation[name] = observation[name].permute(2, 0, 1).contiguous()
+                observation[name] = observation[name].permute(
+                    2, 0, 1).contiguous()
             observation[name] = observation[name].unsqueeze(0)
             observation[name] = observation[name].to(device)
 
@@ -279,7 +283,50 @@ def control_loop(
 
             image_keys = [key for key in observation if "image" in key]
             for key in image_keys:
-                rr.log(key, rr.Image(observation[key].numpy()), static=True)
+                # Use JPEG compression with 60% quality to reduce bandwidth and improve latency
+                # Convert to uint8 if needed for JPEG compression
+                image_data = observation[key].numpy()
+                if image_data.dtype != np.uint8:
+                    # Normalize and convert to uint8 if the image is not already in the right format
+                    if image_data.max() <= 1.0:  # Assume it's in [0,1] range
+                        image_data = (image_data * 255).astype(np.uint8)
+                    else:
+                        image_data = image_data.astype(np.uint8)
+
+                # Encode as JPEG in memory to reduce bandwidth
+                # Convert RGB to BGR for OpenCV
+                bgr_image = cv2.cvtColor(image_data, cv2.COLOR_RGB2BGR)
+                success, jpeg_buffer = cv2.imencode('.jpg', bgr_image,
+                                                    [cv2.IMWRITE_JPEG_QUALITY, 40])
+
+                if success:
+                    rr.log(key, rr.EncodedImage(
+                        contents=jpeg_buffer.tobytes(),
+                        media_type=rr.MediaType.JPEG), static=True)
+
+                    # Explicitly delete intermediate arrays to prevent memory buildup
+                    del bgr_image, jpeg_buffer
+                else:
+                    # Fallback to uncompressed if JPEG encoding fails
+                    rr.log(key, rr.Image(image_data), static=True)
+
+            # Periodic garbage collection for long sessions
+            import gc
+            if not hasattr(robot, '_teleoperation_frame_count'):
+                robot._teleoperation_frame_count = 0
+            robot._teleoperation_frame_count += 1
+
+            # Force garbage collection every 200 frames (~6-7 seconds at 30fps)
+            if robot._teleoperation_frame_count % 200 == 0:
+
+                for key in image_keys:
+                    rr.log(key, rr.Clear(recursive=False))
+
+                if action is not None:
+                    for k, v in action.items():
+                        for i, vv in enumerate(v):
+                            rr.log(f"sent_{k}_{i}", rr.Clear(recursive=False))
+
 
         if fps is not None:
             dt_s = time.perf_counter() - start_loop_t
@@ -344,11 +391,14 @@ def sanity_check_dataset_robot_compatibility(
 
     mismatches = []
     for field, dataset_value, present_value in fields:
-        diff = DeepDiff(dataset_value, present_value, exclude_regex_paths=[r".*\['info'\]$"])
+        diff = DeepDiff(dataset_value, present_value,
+                        exclude_regex_paths=[r".*\['info'\]$"])
         if diff:
-            mismatches.append(f"{field}: expected {present_value}, got {dataset_value}")
+            mismatches.append(
+                f"{field}: expected {present_value}, got {dataset_value}")
 
     if mismatches:
         raise ValueError(
-            "Dataset metadata compatibility check failed with mismatches:\n" + "\n".join(mismatches)
+            "Dataset metadata compatibility check failed with mismatches:\n" +
+            "\n".join(mismatches)
         )

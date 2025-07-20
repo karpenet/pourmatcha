@@ -518,7 +518,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
                 },
             ),
             # "cv": FeetechMotorsBusConfig(
-            #     port="/dev/ttyACM0",
+            #     port="/dev/ttyACM2",
             #     motors={
             #         # name: (index, model)
             #         "shoulder_pan": [1, "sts3215"],
@@ -547,7 +547,7 @@ class So100RobotConfig(ManipulatorRobotConfig):
                 },
             ),
             # "cv": FeetechMotorsBusConfig(
-            #     port="/dev/ttyACM1",
+            #     port="/dev/ttyACM3",
             #     motors={
             #         # name: (index, model)
             #         "shoulder_pan": [1, "sts3215"],
@@ -564,19 +564,19 @@ class So100RobotConfig(ManipulatorRobotConfig):
     cameras: dict[str, CameraConfig] = field(
         default_factory=lambda: {
             "main": OpenCVCameraConfig(
-                camera_index=0,
+                camera_index=2,
                 fps=30,
                 width=640,
                 height=480,
             ),
             # "cv": OpenCVCameraConfig(
-            #     camera_index=2,
+            #     camera_index=4,
             #     fps=30,
             #     width=640,
             #     height=480,
             # ),
             "webcam": OpenCVCameraConfig(
-                camera_index=2,
+                camera_index=0,
                 fps=30,
                 width=640,
                 height=480,
@@ -585,7 +585,6 @@ class So100RobotConfig(ManipulatorRobotConfig):
     )
 
     mock: bool = False
-
 
 @RobotConfig.register_subclass("stretch")
 @dataclass

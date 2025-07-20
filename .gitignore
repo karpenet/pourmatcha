@@ -2,3 +2,6 @@
 .vscode
 *.log
 pretrained_model/
+reward_fn/*data*
+**wandb
+__pycache__/
